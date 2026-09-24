@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight, Bell, BookOpenText, CalendarClock, ChevronRight, CircleHelp,
   FileText, History, Layers3, Link2, LoaderCircle, Plus, RotateCcw, Search,
@@ -31,6 +31,37 @@ type Analysis = {
   claims: ExtractedClaim[];
   mode: "deepseek" | "curated" | "manual";
   warnings?: string[];
+};
+
+type DiscoveryCandidate = {
+  id: string;
+  title: string;
+  companyName: string;
+  stockCode: string;
+  disclosedOn: string;
+  url: string;
+};
+
+type DiscoveryResult = {
+  source: "cninfo-public";
+  searchScope: "announcement-title";
+  capturedAt: string;
+  stockCode: string;
+  page: number;
+  hasMore: boolean;
+  candidates: DiscoveryCandidate[];
+  warning?: string | null;
+};
+
+type DiscoveryQuery = {
+  stockCode: string;
+  startDate: string;
+  endDate: string;
+  keyword: string;
+};
+
+const defaultDiscoveryQuery: DiscoveryQuery = {
+  stockCode: "000628", startDate: "2024-04-01", endDate: "2024-04-30", keyword: "",
 };
 
 type FormState = {
@@ -101,6 +132,13 @@ export default function Workbench() {
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState("timeline");
   const [importOpen, setImportOpen] = useState(false);
+  const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [discoveryQuery, setDiscoveryQuery] = useState<DiscoveryQuery>(defaultDiscoveryQuery);
+  const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState("");
+  const discoveryRequestId = useRef(0);
+  const [fromDiscovery, setFromDiscovery] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -186,6 +224,85 @@ export default function Workbench() {
     && form.text.trim() === sourceText(DEMO_FINAL_SOURCE).trim();
   const targetClaims = choice === "new" ? [] : snapshot(choice, allSources).claims;
 
+  function openDiscovery() {
+    discoveryRequestId.current += 1;
+    setDiscoveryQuery({ ...defaultDiscoveryQuery, stockCode: /^\d{6}$/.test(event.ticker) ? event.ticker : "" });
+    setDiscoveryResult(null);
+    setDiscoveryError("");
+    setDiscoveryLoading(false);
+    setDiscoverOpen(true);
+  }
+
+  function updateDiscoveryQuery(field: keyof DiscoveryQuery, value: string) {
+    discoveryRequestId.current += 1;
+    setDiscoveryQuery((previous) => ({ ...previous, [field]: value }));
+    setDiscoveryResult(null);
+    setDiscoveryError("");
+  }
+
+  async function searchCandidates(page = 1) {
+    if (!/^\d{6}$/.test(discoveryQuery.stockCode)) {
+      setDiscoveryError("请输入深市 6 位股票代码。");
+      return;
+    }
+    if (!discoveryQuery.startDate || !discoveryQuery.endDate || discoveryQuery.startDate > discoveryQuery.endDate) {
+      setDiscoveryError("请填写有效的披露日期范围，且开始日期不晚于结束日期。");
+      return;
+    }
+    setDiscoveryLoading(true);
+    setDiscoveryError("");
+    const requestId = ++discoveryRequestId.current;
+    try {
+      const response = await fetch("/api/discover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stockCode: discoveryQuery.stockCode,
+          startDate: discoveryQuery.startDate,
+          endDate: discoveryQuery.endDate,
+          keyword: discoveryQuery.keyword.trim() || undefined,
+          page,
+        }),
+      });
+      const payload = await response.json().catch(() => null) as (DiscoveryResult & { error?: string }) | null;
+      if (!response.ok) throw new Error(payload?.error || `公告检索失败（HTTP ${response.status}）。`);
+      if (!payload || !Array.isArray(payload.candidates)) throw new Error("公告检索返回格式异常。");
+      if (requestId === discoveryRequestId.current) setDiscoveryResult(payload);
+    } catch (error) {
+      if (requestId === discoveryRequestId.current) {
+        setDiscoveryResult(null);
+        setDiscoveryError(error instanceof Error ? error.message : "公告检索暂不可用。");
+      }
+    } finally {
+      if (requestId === discoveryRequestId.current) setDiscoveryLoading(false);
+    }
+  }
+
+  function openCandidate(candidate: DiscoveryCandidate) {
+    setReplay(false);
+    setDiscoverOpen(false);
+    setFromDiscovery(true);
+    setForm({
+      ...emptyForm,
+      title: candidate.title,
+      publisher: candidate.companyName,
+      url: candidate.url,
+      disclosedOn: candidate.disclosedOn,
+    });
+    setAnalysis(null);
+    setManualClaim("");
+    setFormError("");
+    setImportOpen(true);
+  }
+
+  function viewCollectedSource(source: Source) {
+    setDiscoverOpen(false);
+    setReplay(false);
+    setSelectedEventId(source.eventId);
+    setSelectedSourceId(source.id);
+    setTab("timeline");
+  }
+
   function setField<K extends keyof FormState>(field: K, value: FormState[K]) {
     setForm((previous) => ({ ...previous, [field]: value }));
     setAnalysis(null);
@@ -208,6 +325,7 @@ export default function Workbench() {
 
   function fillDemo() {
     if (!replay) startReplay();
+    setFromDiscovery(false);
     setForm({
       title: DEMO_FINAL_SOURCE.title,
       publisher: DEMO_FINAL_SOURCE.publisher,
@@ -404,7 +522,7 @@ export default function Workbench() {
       <div className="workspace">
         <aside className="event-rail">
           <div className="rail-heading"><span>关注事件</span><span className="rail-count">{String(allEvents.length).padStart(2, "0")}</span></div>
-          <label className="rail-search"><Search size={16} /><input aria-label="搜索事件" placeholder="搜索公司或事件" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+          <label className="rail-search"><Search size={16} /><input aria-label="筛选已关注事件" placeholder="筛选已关注事件" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
           {filteredEvents.length === 0 && <p className="rail-empty">没有匹配的事件</p>}
           {filteredEvents.map((item) => {
             const status = snapshot(item.id, allSources);
@@ -414,19 +532,22 @@ export default function Workbench() {
               <span className="event-item-foot"><span className="status-pip" />{status.label}</span>
             </button>;
           })}
-          <div className="rail-tip"><ShieldCheck size={18} /><span>真实案例的关键结论附原始公告；用户导入材料单独标记为待复核。</span></div>
+          <div className="rail-tip"><ShieldCheck size={18} /><span>这里只筛选预置研究案例与用户新建事件。公开公告请使用「检索候选公告」。</span></div>
         </aside>
 
         <main className="main-pane">
           <div className="breadcrumb">关注事件 <ChevronRight size={14} /> {event.company}</div>
           {!replay && <div className="freshness-banner"><TriangleAlert size={15}/><span>资料包最后披露日为 2024-04-19；未核验其后的最新进展。以下结论仅针对已收录材料。</span></div>}
           <div className="page-heading"><div><div className="heading-eyebrow">事件档案 <span>{event.id === "huakun" ? "EVENT FILE / 001" : event.id === "beite" ? "EVENT FILE / 002" : "USER EVENT"}</span></div><h1>{event.title}</h1><p>{event.company}{event.ticker ? " · " + event.ticker : ""} · {event.relation}</p></div>
+            <div className="page-actions">
+              <Button variant="outline" className="discover-button" onClick={openDiscovery}><Search size={16} /> 检索候选公告</Button>
             <Sheet open={importOpen} onOpenChange={setImportOpen}>
-              <SheetTrigger asChild><Button className="import-button"><Plus size={17} /> 导入新材料</Button></SheetTrigger>
+              <SheetTrigger asChild><Button className="import-button" onClick={() => { if (fromDiscovery) { setForm(emptyForm); setAnalysis(null); } setFromDiscovery(false); }}><Plus size={17} /> 导入新材料</Button></SheetTrigger>
               <SheetContent className="import-sheet" side="right">
                 <SheetHeader><SheetTitle>导入新材料</SheetTitle><SheetDescription>输入原文片段与来源；模型仅提取候选主张，最终归属由你确认。</SheetDescription></SheetHeader>
                 <div className="import-form">
                   <button className="sample-loader" type="button" onClick={fillDemo}><FileText size={17} /> 填入已核验的 4 月 19 日公告演示样本</button>
+                  {fromDiscovery && <p className="candidate-import-note"><TriangleAlert size={16} /><span>候选公告只经过标题检索，正文尚未核验。请{/^https?:\/\//i.test(form.url) && <a href={form.url} target="_blank" rel="noopener noreferrer">打开原始 PDF <ArrowUpRight size={13} /></a>}核对并粘贴至少 20 字原句，再提取主张。</span></p>}
                   <div className="form-grid"><label>标题<Input value={form.title} onChange={(event) => setField("title", event.target.value)} placeholder="公告或报道标题" /></label><label>发布者<Input value={form.publisher} onChange={(event) => setField("publisher", event.target.value)} placeholder="公司、媒体或研究机构" /></label></div>
                   <label>原文链接<Input value={form.url} onChange={(event) => setField("url", event.target.value)} placeholder="https://..." type="url" /></label>
                   <fieldset className="source-type-field"><legend>材料类型</legend><RadioGroup value={form.sourceType} onValueChange={(value) => setField("sourceType", value as SourceType)} className="source-type-options">{(["公告", "新闻", "研报", "市场传闻", "其他"] as SourceType[]).map((type) => <label key={type}><RadioGroupItem value={type} />{type}</label>)}</RadioGroup></fieldset>
@@ -450,6 +571,39 @@ export default function Workbench() {
                 </div>
               </SheetContent>
             </Sheet>
+            <Sheet open={discoverOpen} onOpenChange={(open) => { if (!open) discoveryRequestId.current += 1; setDiscoverOpen(open); }}>
+              <SheetContent className="discover-sheet" side="right">
+                <SheetHeader><SheetTitle>检索候选公告</SheetTitle><SheetDescription>从巨潮资讯公开公告中寻找线索，核对后再决定归入哪个事件。</SheetDescription></SheetHeader>
+                <div className="discover-body">
+                  <p className="discover-scope"><TriangleAlert size={16} />仅支持深市 6 位股票代码；按公告标题关键词检索，非全文搜索。搜索结果尚未核验正文，也不自动改变事件结论。</p>
+                  <form className="discover-form" onSubmit={(submitEvent) => { submitEvent.preventDefault(); void searchCandidates(1); }}>
+                    <label>股票代码<Input value={discoveryQuery.stockCode} onChange={(inputEvent) => updateDiscoveryQuery("stockCode", inputEvent.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" maxLength={6} placeholder="如 000628" disabled={discoveryLoading} /></label>
+                    <div className="form-grid"><label>披露日期起<Input type="date" value={discoveryQuery.startDate} onChange={(inputEvent) => updateDiscoveryQuery("startDate", inputEvent.target.value)} disabled={discoveryLoading} /></label><label>披露日期止<Input type="date" value={discoveryQuery.endDate} onChange={(inputEvent) => updateDiscoveryQuery("endDate", inputEvent.target.value)} disabled={discoveryLoading} /></label></div>
+                    <label>标题关键词（可空）<Input value={discoveryQuery.keyword} onChange={(inputEvent) => updateDiscoveryQuery("keyword", inputEvent.target.value)} placeholder="如 华鲲振宇" maxLength={40} disabled={discoveryLoading} /></label>
+                    <Button type="submit" className="discover-submit" disabled={discoveryLoading}>{discoveryLoading ? <LoaderCircle size={16} className="spin" /> : <Search size={16} />}{discoveryLoading ? "正在检索公告标题…" : "检索公告标题"}</Button>
+                  </form>
+                  {discoveryError && <div className="discover-error" role="alert"><strong>检索未完成</strong><p>{discoveryError} 可继续手工导入材料。</p><Button variant="outline" onClick={() => { setDiscoverOpen(false); setFromDiscovery(false); setForm(emptyForm); setAnalysis(null); setFormError(""); setImportOpen(true); }}>改为手工导入</Button></div>}
+                  {discoveryResult && <div className="discover-results">
+                    <div className="discover-result-head"><strong>候选公告 · 第 {discoveryResult.page} 页</strong><span>检索时间 {dateLabel(discoveryResult.capturedAt, true)}</span></div>
+                    {discoveryResult.warning && <p className="discover-warning"><TriangleAlert size={15} />{discoveryResult.warning}</p>}
+                    {discoveryResult.candidates.length === 0 ? <p className="discover-empty">这个日期范围与标题关键词下没有返回候选公告；不能据此判断没有事件。可调整条件或手工导入。</p> :
+                      <div className="discover-list">{discoveryResult.candidates.map((candidate) => {
+                        const existing = [...SEED_SOURCES, ...userSources].find((source) => source.url && normalizeUrl(source.url) === normalizeUrl(candidate.url));
+                        return <article className="discover-card" key={candidate.id}>
+                          <div className="discover-card-meta"><span>{candidate.companyName || candidate.stockCode}</span><time>{candidate.disclosedOn || "披露日期未知"}</time></div>
+                          <h3>{candidate.title}</h3>
+                          <p>仅标题检索，未核验正文{existing ? ` · 已收录于${allEvents.find((item) => item.id === existing.eventId)?.title || "已有事件"}` : " · 待人工核对"}</p>
+                          <div className="discover-card-actions">{/^https?:\/\//i.test(candidate.url) && <a href={candidate.url} target="_blank" rel="noopener noreferrer">打开原始 PDF <ArrowUpRight size={14} /></a>}
+                            {existing ? <Button size="sm" variant="outline" className="collected-button" onClick={() => viewCollectedSource(existing)}>已收录 · 查看</Button> : <Button size="sm" onClick={() => openCandidate(candidate)}>核对并导入</Button>}
+                          </div>
+                        </article>;
+                      })}</div>}
+                    {(discoveryResult.page > 1 || discoveryResult.hasMore) && <div className="discover-pages"><Button size="sm" variant="outline" disabled={discoveryLoading || discoveryResult.page <= 1} onClick={() => void searchCandidates(discoveryResult.page - 1)}>上一页</Button><span>第 {discoveryResult.page} 页</span><Button size="sm" variant="outline" disabled={discoveryLoading || !discoveryResult.hasMore} onClick={() => void searchCandidates(discoveryResult.page + 1)}>下一页</Button></div>}
+                  </div>}
+                </div>
+              </SheetContent>
+            </Sheet>
+            </div>
           </div>
 
           {replay && event.id === "huakun" && <div className="replay-banner"><History size={17} /><span>历史回放：仅使用截至 2024-04-18 已披露且人工核验的材料。后续结论不会提前出现。</span><button onClick={restoreCurrent}>返回完整资料</button></div>}

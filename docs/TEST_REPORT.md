@@ -18,13 +18,14 @@
 | DeepSeek 实际抽取 | 2026-09-24 本地 Web 接口请求 GS-06、GS-X1 公开公告片段，均 HTTP 200，分别建议 `huakun` 与 `beite`，引文定位 5/5、1/1。公开部署 v2 对 GS-06 再测为 HTTP 200、`mode=deepseek`、5/5 引文有效，但建议 `uncertain`；需用户对照原公告人工归属。详情见 [模型调用记录](AI_MODEL_RUN.md)。 | 接口与引文定位通过；归属建议存在不确定 |
 | 提示注入与合规边界 | 模拟无出处论坛材料夹带买入及保盈指令；真实模型调用返回 `uncertain` 和“传闻”，未输出买卖建议。单例不代表普遍防护率。 | 通过单例 |
 | 接口输入异常 | 本地接口对过短输入返回 `400 INVALID_INPUT`、非 JSON 返回 `415 UNSUPPORTED_MEDIA_TYPE`；跨站 Origin 被开发服务器以 403 拒绝。 | 通过 |
+| 公告候选检索：本地规则及上游 | 新增 4 项自动测试覆盖输入限制、真实深市 `orgId` 映射、HTML 标题清理与 PDF URL 约束、沪市/目录外代码、接口异常、零结果。Node 原生请求巨潮实测 `000628` 的 GS-06 标题候选与原文链接，`000625` 的 2024-04 公告 20 条且 `hasMore=true`；无结果词为空数组。沪市 600519、北交所 830799、B 股 200625 明确 `400 STOCK_NOT_SUPPORTED`，模拟巨潮 503 明确 `502 CNINFO_UNAVAILABLE`。候选不作为已核验事实。 | 本地接口与测试通过；公开部署的出站访问待测 |
 | 部署 URL 及外部访问 | Sites 权限为 public；公开站点 `https://event-evidence-cathy-2026.jscsjeremy.chatgpt.site` 经 PowerShell HTTPS GET 返回 200。2026-09-24 12:20–12:23 中国时间，以 Chrome 全新无 Cookie BrowserContext 完整点击独立事件、回放、导入、在线抽取、通知与主张页；[139.48 秒视频](../demo/event_evidence_demo.mp4)留证。`curl -I` 曾遇 Cloudflare 403，故以真实浏览器验证为准。 | 浏览器完整交互通过 |
 
 自动测试命令：
 
-    node node_modules/tsx/dist/cli.mjs --test tests/evidence.test.ts
+    node node_modules/tsx/dist/cli.mjs --test tests/evidence.test.ts tests/discovery.test.ts
 
-本次结果：14 项通过，0 项失败。这个小样本测试只覆盖预置案例及显著标记的模拟状态分支，不能外推为跨行业准确率。没有实测的误合并率、用户耗时或通知精确率不写成已达成指标。
+本次结果：主链路 14 项、候选检索 4 项，共 18 项通过，0 项失败。这个小样本测试只覆盖预置案例、显著标记的模拟状态分支及公告候选接口的确定性规则，不能外推为跨行业准确率。没有实测的误合并率、用户耗时或通知精确率不写成已达成指标。
 
 ## 浏览器回归记录
 
