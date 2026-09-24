@@ -19,7 +19,7 @@ const outputSchema = z.object({
     text: z.string(),
     quote: z.string(),
     kind: z.enum(["事实陈述", "观点", "推测", "传闻"]),
-    relation: z.enum(["支持", "反驳", "更正", "更新", "仅提及"]),
+    relation: z.enum(["支持", "反驳", "否认", "更正", "更新", "仅提及"]),
   })).max(8).default([]),
 });
 
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
     "每条主张的 quote 必须是输入正文中连续出现的原句片段；无法定位就不要输出该主张。",
     "表述类型和核验状态分开：事实陈述只表示作者用事实语气陈述，不表示已经证实。",
     "事件候选：huakun=高新发展拟收购华鲲振宇股权；beite=高新发展拟转让倍特期货股权；new=明确不同事件；uncertain=证据不足。仅同公司绝不是合并依据。",
-    "返回一个 JSON 对象，字段：entities(string[]), action(string), object(string), suggestedEvent(huakun|beite|new|uncertain), matchReason(string), claims([{text,quote,kind(事实陈述|观点|推测|传闻),relation(支持|反驳|更正|更新|仅提及)}])。更新表示后续进展，并不等于原文更正。",
+    "返回一个 JSON 对象，字段：entities(string[]), action(string), object(string), suggestedEvent(huakun|beite|new|uncertain), matchReason(string), claims([{text,quote,kind(事实陈述|观点|推测|传闻),relation(支持|反驳|否认|更正|更新|仅提及)}])。更新表示后续进展，并不等于原文更正。",
   ].join("\n");
 
   try {

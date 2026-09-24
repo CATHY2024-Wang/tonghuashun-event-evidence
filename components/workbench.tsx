@@ -15,7 +15,8 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
 import {
-  BASE_EVENTS, DEMO_FINAL_SOURCE, SEED_SOURCES, evaluateClaimUpdates, isDuplicateSource, snapshot,
+  BASE_EVENTS, DEMO_FINAL_SOURCE, SEED_SOURCES, classifySourceImport, currentChinaDate,
+  evaluateClaimUpdates, normalizeUrl, snapshot,
   sortedSources, sourceText, sourcesKnownBy, suggestEvent,
   type EventId, type EventInfo, type EvidenceRelation, type ExtractedClaim, type Notice, type Source,
   type SourceType,
@@ -135,9 +136,37 @@ export default function Workbench() {
     }));
   }, [hydrated, userSources, customEvents, notices]);
 
+  useEffect(() => {
+    if (!hydrated) return;
+    const checkExpiry = () => {
+      const today = currentChinaDate();
+      const dueNotices = userSources.flatMap((source) => {
+        if (!(source.extractedClaims ?? []).some((claim) => claim.validUntil && claim.validUntil < today)) return [];
+        const otherSources = [...SEED_SOURCES, ...userSources.filter((item) => item.id !== source.id)];
+        const before = snapshot(source.eventId, otherSources, today);
+        return evaluateClaimUpdates(before.claims, source, today).notices
+          .filter((notice) => notice.title.includes("到期需复核"));
+      });
+      if (dueNotices.length) setNotices((previous) => {
+        const known = new Set(previous.map((notice) => notice.id));
+        const additions = dueNotices.filter((notice) => !known.has(notice.id));
+        return additions.length ? [...additions, ...previous] : previous;
+      });
+    };
+    const initial = window.setTimeout(checkExpiry, 0);
+    const timer = window.setInterval(checkExpiry, 60 * 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === "visible") checkExpiry(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [hydrated, userSources]);
+
   const allSources = useMemo(() => {
     const combined = [...SEED_SOURCES, ...userSources];
-    return replay ? sourcesKnownBy(combined, "2024-04-18") : combined;
+    return replay ? sourcesKnownBy(SEED_SOURCES, "2024-04-18") : combined;
   }, [userSources, replay]);
   const allEvents = useMemo(() => [...BASE_EVENTS, ...customEvents].filter((item) =>
     !replay || allSources.some((source) => source.eventId === item.id)
@@ -272,10 +301,11 @@ export default function Workbench() {
       toast.success("已结束历史回放，应用 4 月 19 日已核验公告");
       return;
     }
-    if (isDuplicateSource([...SEED_SOURCES, ...userSources], {
-      url: form.url.trim(), title: form.title.trim(), quote: form.text.trim().slice(0, 160),
-      updatedOn: form.updatedOn || null,
-    })) {
+    const importKind = classifySourceImport([...SEED_SOURCES, ...userSources], {
+      url: form.url.trim(), title: form.title.trim(), quote: form.text.trim(),
+      rawText: form.text.trim(), updatedOn: form.updatedOn || null,
+    });
+    if (importKind === "duplicate") {
       setFormError("这份材料已在当前资料中，重复导入不会生成新版本或通知。");
       return;
     }
@@ -283,7 +313,7 @@ export default function Workbench() {
       setFormError("请至少手工填写一条可核查主张。");
       return;
     }
-    if (["反驳", "更正", "更新"].includes(reviewRelation) && !reviewTarget) {
+    if (["反驳", "否认", "更正", "更新"].includes(reviewRelation) && !reviewTarget) {
       setFormError("请指出首条主张对应的已有主张，才能记录冲突或版本变化。");
       return;
     }
@@ -293,6 +323,10 @@ export default function Workbench() {
     }
     const eventId = choice === "new" ? "custom-" + Date.now() : choice;
     const id = "USR-" + Date.now();
+    const previousVersion = importKind === "new_version"
+      ? [...SEED_SOURCES, ...userSources].filter((source) =>
+        normalizeUrl(source.url) === normalizeUrl(form.url.trim())).at(-1)
+      : undefined;
     const reviewFields = {
       relation: reviewRelation,
       targetClaimId: reviewTarget || undefined,
@@ -308,8 +342,12 @@ export default function Workbench() {
       sourceType: form.sourceType, url: form.url.trim(), disclosedOn: form.disclosedOn || null,
       occurredOn: form.occurredOn || null, capturedOn: new Date().toISOString(),
       updatedOn: form.updatedOn || null, quote: extractedClaims[0]?.quote || form.text.slice(0, 160),
-      page: null, additionalQuotes: [], summary: form.simulated ? "模拟测试材料，不代表真实历史。" : "用户导入材料，等待原文核验。",
+      rawText: form.text.trim(),
+      page: null, additionalQuotes: [], summary: form.simulated ? "模拟测试材料，不代表真实历史。"
+        : previousVersion ? `用户导入 ${previousVersion.id} 的原文修订版本，等待原文核验。`
+          : "用户导入材料，等待原文核验。",
       verified: false, simulated: form.simulated, originGroup: form.originGroup.trim() || id,
+      revisesSourceId: previousVersion?.id ?? null,
       extractedClaims,
     };
     const before = snapshot(eventId, [...SEED_SOURCES, ...userSources]);
@@ -403,7 +441,7 @@ export default function Workbench() {
                     <div className="match-options"><span>选择事件归属</span><RadioGroup value={choice} onValueChange={(value) => { setChoice(value as EventId | "new"); setReviewTarget(""); }}>{[...allEvents.map((item) => ({ id: item.id, label: item.title })), { id: "new", label: "新建事件" }].map((option) => <label key={option.id}><RadioGroupItem value={option.id} />{option.label}{analysis.suggestedEvent === option.id && <em>建议</em>}</label>)}</RadioGroup></div>
                     {analysis.claims.map((claim, index) => <div className="analysis-claim" key={index}><div><b>{claim.kind}</b><span>{claim.relation}</span></div><p>{claim.text}</p><blockquote>“{claim.quote}”</blockquote></div>)}
                     {analysis.claims.length === 0 && <label className="manual-claim">手工填写一条可核查主张<Input value={manualClaim} onChange={(event) => setManualClaim(event.target.value)} placeholder="如：公司披露拟转让某项股权" /></label>}
-                    <div className="review-controls"><strong>首条主张的人工复核</strong><label>与已有主张的关系<select value={reviewRelation} onChange={(event) => setReviewRelation(event.target.value as EvidenceRelation)}>{["仅提及", "支持", "更新", "反驳", "更正"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label>对应哪条已有主张<select value={reviewTarget} onChange={(event) => setReviewTarget(event.target.value)}><option value="">未指定</option>{targetClaims.map((claim) => <option key={claim.id} value={claim.id}>{claim.id} · {claim.text}</option>)}</select></label><label>有效截止日（可空）<Input type="date" value={reviewValidUntil} onChange={(event) => setReviewValidUntil(event.target.value)} /></label><small>反驳、更正和到期先生成待复核提示；用户材料不能直接改写已核验公告结论。</small></div>
+                    <div className="review-controls"><strong>首条主张的人工复核</strong><label>与已有主张的关系<select value={reviewRelation} onChange={(event) => setReviewRelation(event.target.value as EvidenceRelation)}>{["仅提及", "支持", "更新", "反驳", "否认", "更正"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label>对应哪条已有主张<select value={reviewTarget} onChange={(event) => setReviewTarget(event.target.value)}><option value="">未指定</option>{targetClaims.map((claim) => <option key={claim.id} value={claim.id}>{claim.id} · {claim.text}</option>)}</select></label><label>有效截止日（可空）<Input type="date" value={reviewValidUntil} onChange={(event) => setReviewValidUntil(event.target.value)} /></label><small>否认、更正和到期先生成待复核提示；用户材料不能直接改写已核验公告结论。</small></div>
                     {analysis.warnings?.map((warning) => <p className="analysis-warning" key={warning}><TriangleAlert size={14} />{warning}</p>)}
                     <p className="review-note">用户导入材料默认待复核；只有资料包中逐份核验过的原始公告可改变演示案例的已确认状态。</p>
                     <Button onClick={confirmImport} className="confirm-button">确认归属并导入</Button>
@@ -414,7 +452,7 @@ export default function Workbench() {
             </Sheet>
           </div>
 
-          {replay && event.id === "huakun" && <div className="replay-banner"><History size={17} /><span>历史回放：仅使用截至 2024-04-18 已披露的材料。后续结论不会提前出现。</span><button onClick={restoreCurrent}>返回完整资料</button></div>}
+          {replay && event.id === "huakun" && <div className="replay-banner"><History size={17} /><span>历史回放：仅使用截至 2024-04-18 已披露且人工核验的材料。后续结论不会提前出现。</span><button onClick={restoreCurrent}>返回完整资料</button></div>}
           <section className="finding-card" aria-label="当前结论"><div className="finding-head"><span>当前可确认的结论</span><span className="finding-state">{current.label}</span></div><h2>{current.headline}</h2><p>{current.explanation}</p>{selectedSource && <button className="finding-link" onClick={() => { setSelectedSourceId(current.sourceId); setTab("timeline"); }}>查看支撑材料 {current.sourceId} <ArrowUpRight size={15}/></button>}</section>
           {event.id === "huakun" && <div className="replay-control">{replay ? <span>回放依据：截至 2024.04.18 的公开披露</span> : <span>完整资料：截至 2024.04.19 的已核验公告</span>}<Button variant="outline" size="sm" onClick={replay ? restoreCurrent : startReplay}>{replay ? <RotateCcw size={15} /> : <History size={15} />}{replay ? "返回完整资料" : "回放至 4 月 18 日"}</Button></div>}
 
@@ -422,7 +460,7 @@ export default function Workbench() {
             <TabsList variant="line"><TabsTrigger value="timeline">证据时间线 <span>{eventSources.length}</span></TabsTrigger><TabsTrigger value="claims">逐条主张 <span>{current.claims.length}</span></TabsTrigger></TabsList>
             <TabsContent value="timeline"><div className="section-caption"><CalendarClock size={16} /><span>按披露日期排序；发生时间可能更早，抓取时间不用于倒推当时已知信息。</span></div><div className="timeline">
               {eventSources.map((source) => <button className={"timeline-row " + (selectedSource?.id === source.id ? "active" : "")} key={source.id} onClick={() => setSelectedSourceId(source.id)}>
-                <span className="timeline-track"><span className="timeline-node" /></span><time>{shortDate(source.disclosedOn)}</time><span className="timeline-content"><strong>{source.title}</strong><small>{source.id} · {source.publisher} · {source.sourceType}{!source.verified ? " · 用户导入待复核" : ""}</small></span><ChevronRight size={16} className="row-arrow" />
+                <span className="timeline-track"><span className="timeline-node" /></span><time>{shortDate(source.disclosedOn)}</time><span className="timeline-content"><strong>{source.title}</strong><small>{source.id} · {source.publisher} · {source.sourceType}{!source.verified ? " · 用户导入待复核" : ""}{source.revisesSourceId ? " · 原文修订版" : ""}</small></span><ChevronRight size={16} className="row-arrow" />
               </button>)}
               {eventSources.length === 0 && <p className="empty-list">尚无材料。可以导入一份来源并建立事件。</p>}
             </div></TabsContent>
@@ -431,7 +469,7 @@ export default function Workbench() {
         </main>
 
         <aside className="inspector"><div className="inspector-heading"><BookOpenText size={18}/><span>原文证据</span></div>{selectedSource ? <>
-          <div className="inspector-block"><div className="source-badges"><span>{selectedSource.sourceType}</span><span>{selectedSource.verified ? "原文已核验" : "用户导入 · 待复核"}</span>{selectedSource.simulated && <span>模拟测试</span>}</div><h3>{selectedSource.title}</h3><p>{selectedSource.publisher}</p>{selectedSource.url && <a className="source-open" href={selectedSource.url} target="_blank" rel="noopener noreferrer">打开原始材料 <ArrowUpRight size={15}/></a>}</div>
+          <div className="inspector-block"><div className="source-badges"><span>{selectedSource.sourceType}</span><span>{selectedSource.verified ? "原文已核验" : "用户导入 · 待复核"}</span>{selectedSource.simulated && <span>模拟测试</span>}{selectedSource.revisesSourceId && <span>原文修订版</span>}</div><h3>{selectedSource.title}</h3><p>{selectedSource.publisher}</p>{selectedSource.url && <a className="source-open" href={selectedSource.url} target="_blank" rel="noopener noreferrer">打开原始材料 <ArrowUpRight size={15}/></a>}{selectedSource.revisesSourceId && <button type="button" className="source-open" onClick={() => setSelectedSourceId(selectedSource.revisesSourceId!)}>查看上一版本 {selectedSource.revisesSourceId} <History size={15}/></button>}</div>
           <div className="inspector-block"><small>对应引文 {selectedSource.page ? "· PDF 第 " + selectedSource.page + " 页" : ""}</small><blockquote className="evidence-quote">“{selectedSource.quote}”</blockquote>{selectedSource.additionalQuotes.slice(0, 3).map((item, index) => <blockquote key={index} className="evidence-quote extra">“{item.quote}”<span>第 {item.page} 页</span></blockquote>)}<p>{selectedSource.summary}</p></div>
           <div className="inspector-block"><small>四种时间</small><dl className="four-times"><div><dt>事件发生</dt><dd>{dateLabel(selectedSource.occurredOn)}</dd></div><div><dt>对外披露</dt><dd>{selectedSource.publishedAt ? dateLabel(selectedSource.publishedAt, true) : dateLabel(selectedSource.disclosedOn)}</dd></div><div><dt>系统收录</dt><dd>{dateLabel(selectedSource.capturedOn, true)}</dd></div><div><dt>原文更新</dt><dd>{dateLabel(selectedSource.updatedOn)}</dd></div></dl>{selectedSource.publishedAtBasis && <p className="time-basis">网页时刻口径：{selectedSource.publishedAtBasis}</p>}<p className="time-explainer"><CircleHelp size={14}/>未知时间不以披露或抓取时间代填。</p></div>
           <div className="inspector-block"><small>证据独立性</small><p>{selectedSource.originGroup !== selectedSource.id ? "这份材料转引 " + selectedSource.originGroup + "，不计作新的独立原始证据。" : "原始来源或未标注转引关系。"}</p></div>

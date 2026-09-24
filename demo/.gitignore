@@ -1,0 +1,12 @@
+node_modules/
+ms-playwright/
+pydeps/
+package.json
+package-lock.json
+page@*.webm
+test.*
+initial.png
+frame*.png
+qa_*.png
+voice_*.wav
+dry_run*

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   SEED_SOURCES, classifySourceImport, evaluateClaimUpdates, isDuplicateSource,
-  snapshot, sortedSources, sourcesKnownBy, suggestEvent, type ExtractedClaim,
+  snapshot, sortedSources, sourceText, sourcesKnownBy, suggestEvent, type ExtractedClaim,
   type Source,
 } from "../lib/evidence";
 
@@ -72,6 +72,45 @@ test("同 URL 内容和更新时间都变化才作为更正版本，不重复计
   assert.equal(isDuplicateSource([original], revised), false);
   assert.equal(isDuplicateSource([original], { ...revised, updatedOn: null }), true);
   assert.equal(isDuplicateSource([original], { ...revised, quote: original.quote }), true);
+});
+
+test("同 URL 完整正文未变时更新时间变化仍判重，真正改变正文才生成版本", () => {
+  const seed = SEED_SOURCES.find((item) => item.id === "GS-06")!;
+  const originalText = sourceText(seed);
+  const sameContent = {
+    url: seed.url, title: "人为改写的标题", quote: "不同长度的首段摘录",
+    rawText: originalText, updatedOn: "2024-04-20",
+  };
+  assert.equal(classifySourceImport([seed], sameContent), "duplicate");
+  assert.equal(isDuplicateSource([seed], sameContent), true);
+  assert.equal(classifySourceImport([seed], {
+    ...sameContent, rawText: originalText + "\n【模拟测试】新增更正段落。",
+  }), "new_version");
+
+  const existingUserSource: Source = {
+    ...seed, id: "USR-V1", rawText: "第一段原文。\n第二段原文。",
+    updatedOn: "2024-04-19", verified: false,
+  };
+  assert.equal(classifySourceImport([existingUserSource], {
+    ...sameContent, rawText: existingUserSource.rawText,
+  }), "duplicate");
+  assert.equal(classifySourceImport([existingUserSource], {
+    ...sameContent, rawText: "第一段原文。\n第二段已更正。",
+  }), "new_version");
+});
+
+test("无 URL 的相同用户全文重复导入也被识别，即使模型只摘出部分引文", () => {
+  const source = {
+    ...simulatedUpdate("SIM-NO-URL", {
+      text: "某论坛声称原方案并未终止", quote: "某论坛声称原方案并未终止",
+      kind: "传闻", relation: "仅提及",
+    }),
+    url: "", title: "匿名论坛帖", quote: "某论坛声称原方案并未终止",
+    rawText: "某论坛声称原方案并未终止，但没有提供公告链接或其他证据。",
+  };
+  assert.equal(classifySourceImport([source], {
+    url: "", title: source.title, quote: source.rawText, rawText: source.rawText,
+  }), "duplicate");
 });
 
 test("模拟否认只标记目标主张待复核，原官方结论和其他主张不变", () => {

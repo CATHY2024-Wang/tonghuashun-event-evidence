@@ -32,6 +32,9 @@ export type Source = {
   publishedAt?: string | null;
   publishedAtBasis?: string | null;
   quote: string;
+  /** Full user-supplied text when available; seed sources fall back to sourceText(). */
+  rawText?: string | null;
+  revisesSourceId?: string | null;
   page: number | null;
   additionalQuotes: Array<{ quote: string; page: number }>;
   summary: string;
@@ -146,34 +149,47 @@ export function normalizeUrl(url: string): string {
 
 export type SourceImportKind = "duplicate" | "new_version" | "new_source";
 
-/** A changed quote at the same URL is a version only when an updated date is supplied. */
+function normalizeContent(value: string): string {
+  return value.replace(/\s+/g, "").toLowerCase();
+}
+
+/** A changed document at the same URL is a version only when an updated date is supplied. */
 export function classifySourceImport(
   existing: Source[],
-  candidate: Pick<Source, "url" | "title" | "quote"> & Partial<Pick<Source, "updatedOn">>,
+  candidate: Pick<Source, "url" | "title" | "quote"> & Partial<Pick<Source, "updatedOn" | "rawText">>,
 ): SourceImportKind {
   const url = normalizeUrl(candidate.url);
-  const fingerprint = (candidate.title + candidate.quote).replace(/\s+/g, "").toLowerCase();
-  if (existing.some((source) =>
-    (source.title + source.quote).replace(/\s+/g, "").toLowerCase() === fingerprint
-  )) return "duplicate";
-
   const previousVersions = existing.filter((source) =>
     url.length > 8 && normalizeUrl(source.url) === url
   );
-  if (!previousVersions.length) return "new_source";
-  const quote = candidate.quote.replace(/\s+/g, "").toLowerCase();
-  if (quote && previousVersions.some((source) =>
-    source.quote.replace(/\s+/g, "").toLowerCase() === quote
-  )) return "duplicate";
-  if (candidate.updatedOn && previousVersions.every((source) => source.updatedOn !== candidate.updatedOn)) {
-    return "new_version";
+  const fullText = candidate.rawText?.trim() ? normalizeContent(candidate.rawText) : "";
+  const sameFullText = (source: Source) =>
+    fullText.length > 0 && normalizeContent(source.rawText?.trim() || sourceText(source)) === fullText;
+
+  if (previousVersions.length) {
+    // Full text takes precedence over a short quote: a revised excerpt of an
+    // unchanged page is not a new source version.
+    if (previousVersions.some(sameFullText)) return "duplicate";
+    if (!fullText) {
+      const quote = normalizeContent(candidate.quote);
+      if (quote && previousVersions.some((source) => normalizeContent(source.quote) === quote)) {
+        return "duplicate";
+      }
+    }
+    return candidate.updatedOn &&
+      previousVersions.every((source) => source.updatedOn !== candidate.updatedOn)
+      ? "new_version" : "duplicate";
   }
-  return "duplicate";
+
+  const fingerprint = normalizeContent(candidate.title + candidate.quote);
+  return existing.some((source) =>
+    sameFullText(source) || normalizeContent(source.title + source.quote) === fingerprint
+  ) ? "duplicate" : "new_source";
 }
 
 export function isDuplicateSource(
   existing: Source[],
-  candidate: Pick<Source, "url" | "title" | "quote"> & Partial<Pick<Source, "updatedOn">>,
+  candidate: Pick<Source, "url" | "title" | "quote"> & Partial<Pick<Source, "updatedOn" | "rawText">>,
 ): boolean {
   return classifySourceImport(existing, candidate) === "duplicate";
 }
