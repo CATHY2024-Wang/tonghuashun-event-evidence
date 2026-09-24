@@ -1,0 +1,209 @@
+{
+  "schema_version": "1.0",
+  "verified_on": "2026-09-24",
+  "time_precision_note": "disclosed_on is a calendar date from the CNInfo announcement list, not a verified publication time; occurred_on is populated only when the PDF identifies the date; updated_at is unknown.",
+  "sources": [
+    {
+      "id": "GS-01",
+      "title": "关于筹划发行股份购买资产事项的停牌公告",
+      "publisher": "成都高新发展股份有限公司",
+      "type": "company_announcement",
+      "url": "https://static.cninfo.com.cn/finalpage/2023-09-27/1217961791.PDF",
+      "disclosed_on": "2023-09-27",
+      "occurred_on": "2023-09-26",
+      "updated_at": null,
+      "quote": "自2023年9月27日开市起开始停牌",
+      "page": 1,
+      "claim_summary": "公司筹划通过发行股份等方式购买华鲲振宇控制权；9月26日签意向协议，9月27日停牌，交易尚未确定。",
+      "additional_quotes": [
+        {
+          "quote": "公司于2023年9月26日与交易对方高投电子集团、共青城华鲲、平潭云辰分别签署了意向协议",
+          "page": 2,
+          "classification": "reported_fact"
+        }
+      ],
+      "event_key": "000628|acquire_control|华鲲振宇|2023-09-26",
+      "is_simulated": false
+    },
+    {
+      "id": "GS-02",
+      "title": "发行股份及支付现金购买资产并募集配套资金暨关联交易预案",
+      "publisher": "成都高新发展股份有限公司",
+      "type": "company_announcement",
+      "url": "https://static.cninfo.com.cn/finalpage/2023-10-19/1218081398.PDF",
+      "disclosed_on": "2023-10-19",
+      "occurred_on": "2023-10-18",
+      "updated_at": null,
+      "quote": "截至本预案签署日，与本次交易相关的审计、评估工作尚未完成",
+      "page": 2,
+      "claim_summary": "重组预案正式披露，但审计和评估尚未完成，交易仍待后续审批；10月18日曾与交易对方签署购买资产框架协议。",
+      "additional_quotes": [
+        {
+          "quote": "2023年10月18日，高新发展分别与高投电子集团、共青城华鲲、平潭云辰签署的《发行股份及支付现金购买资产框架协议》",
+          "page": 8,
+          "classification": "reported_fact"
+        }
+      ],
+      "event_key": "000628|acquire_control|华鲲振宇|2023-09-26",
+      "is_simulated": false
+    },
+    {
+      "id": "GS-03",
+      "title": "关于深圳证券交易所重组问询函回复的公告",
+      "publisher": "成都高新发展股份有限公司",
+      "type": "company_announcement",
+      "url": "https://static.cninfo.com.cn/finalpage/2023-11-11/1218308042.PDF",
+      "disclosed_on": "2023-11-11",
+      "occurred_on": "2023-10-19",
+      "updated_at": null,
+      "quote": "公司及相关中介机构就《问询函》所提问题进行了认真讨论分析",
+      "page": 1,
+      "claim_summary": "10月19日收到交易所问询；11月11日披露回复和预案修订稿，仍为拟议交易。",
+      "additional_quotes": [
+        {
+          "quote": "购买四川华鲲振宇智能科技有限责任公司（以下简称标的公司）70%股权",
+          "page": 2,
+          "classification": "proposed_transaction"
+        }
+      ],
+      "event_key": "000628|acquire_control|华鲲振宇|2023-09-26",
+      "is_simulated": false
+    },
+    {
+      "id": "GS-04",
+      "title": "关于发行股份及支付现金购买资产并募集配套资金暨关联交易事项的进展及风险提示公告",
+      "publisher": "成都高新发展股份有限公司",
+      "type": "company_announcement",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-04-09/1219540611.PDF",
+      "disclosed_on": "2024-04-09",
+      "occurred_on": null,
+      "updated_at": null,
+      "quote": "公司与交易各方对交易作价尚未达成一致",
+      "page": 1,
+      "claim_summary": "审计评估仍在进行，交易作价未达一致，存在终止风险；当日不能判定交易已终止。",
+      "event_key": "000628|acquire_control|华鲲振宇|2023-09-26",
+      "is_simulated": false
+    },
+    {
+      "id": "GS-05",
+      "title": "关于发行股份及支付现金购买资产并募集配套资金暨关联交易的进展及风险提示公告",
+      "publisher": "成都高新发展股份有限公司",
+      "type": "company_announcement",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-04-18/1219654680.PDF",
+      "disclosed_on": "2024-04-18",
+      "occurred_on": null,
+      "updated_at": null,
+      "quote": "本次交易预计很可能无法按照当前方案继续推进",
+      "page": 1,
+      "claim_summary": "公司正与交易对方协商是否终止，预计4月19日披露决定；尚非正式终止。",
+      "event_key": "000628|acquire_control|华鲲振宇|2023-09-26",
+      "is_simulated": false
+    },
+    {
+      "id": "GS-06",
+      "title": "关于终止本次发行股份及支付现金购买资产并募集配套资金暨关联交易事项的公告",
+      "publisher": "成都高新发展股份有限公司",
+      "type": "company_announcement",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-04-19/1219675794.PDF",
+      "disclosed_on": "2024-04-19",
+      "occurred_on": "2024-04-18",
+      "updated_at": null,
+      "quote": "同意公司终止本次发行股份及支付现金购买资产并募集配套资金暨关联交易事项",
+      "page": 1,
+      "claim_summary": "4月18日董事会和监事会同意终止2023年重组方案，4月19日披露；新收购意向仍不确定。",
+      "additional_quotes": [
+        {
+          "quote": "上市公司与部分交易对方未能就交易作价达成一致意见",
+          "page": 4,
+          "classification": "reported_reason"
+        },
+        {
+          "quote": "公司将推动相关股权的收购，取得标的公司控制权。",
+          "page": 5,
+          "classification": "stated_future_intent"
+        },
+        {
+          "quote": "未来公司能否取得标的公司控制权及取得标的公司控制权的时间、交易方案均存在不确定性。",
+          "page": 5,
+          "classification": "uncertainty_caveat"
+        },
+        {
+          "quote": "高投电子集团持有标的公司55%股权",
+          "page": 5,
+          "classification": "reported_fact"
+        }
+      ],
+      "event_key": "000628|acquire_control|华鲲振宇|2023-09-26",
+      "is_simulated": false
+    },
+    {
+      "id": "GS-X1",
+      "title": "关于公司控股子公司转让参股公司倍特期货有限公司股权暨关联交易的提示性公告",
+      "publisher": "成都高新发展股份有限公司",
+      "type": "company_announcement",
+      "url": "https://static.cninfo.com.cn/finalpage/2024-04-19/1219675792.PDF",
+      "disclosed_on": "2024-04-19",
+      "occurred_on": "2024-04-18",
+      "updated_at": null,
+      "quote": "33.75%股权",
+      "page": 1,
+      "claim_summary": "控股子公司倍特投资拟向高投资管转让倍特期货33.75%股权，标的和交易方向与华鲲振宇重组不同；应建独立事件。",
+      "event_key": "000628|dispose_equity|倍特期货|2024-04-18",
+      "is_simulated": false
+    },
+    {
+      "id": "NEWS-01",
+      "title": "高新发展：拟购买华鲲振宇股权",
+      "publisher": "每日经济新闻（每经AI快讯）",
+      "type": "news",
+      "url": "https://www.nbd.com.cn/articles/2023-09-27/3037208.html",
+      "disclosed_on": "2023-09-27",
+      "published_at": "2023-09-27T08:11:04+08:00",
+      "published_at_basis": "Web page display and JSON-LD pubDate; timezone inferred from Chinese publisher locale, not explicit in the timestamp",
+      "occurred_on": null,
+      "updated_at": null,
+      "quote": "公司证券自2023年9月27日开市起开始停牌",
+      "page": null,
+      "claim_summary": "转述GS-01的拟收购和停牌，不构成独立交易事实证据。网页称9月26日晚间公告，与巨潮列表9月27日日期口径不同。",
+      "origin_group": "GS-01",
+      "event_key": "000628|acquire_control|华鲲振宇|2023-09-26",
+      "is_simulated": false
+    },
+    {
+      "id": "NEWS-02",
+      "title": "利好突变利空，高新发展因“收购案变数”一字跌停！",
+      "publisher": "第一财经",
+      "type": "news",
+      "url": "https://www.yicai.com/news/102073602.html",
+      "disclosed_on": "2024-04-18",
+      "published_at": "2024-04-18T13:04:53+08:00",
+      "published_at_basis": "Web page display; timezone inferred from Chinese publisher locale",
+      "occurred_on": null,
+      "updated_at": null,
+      "quote": "本次交易预计很可能无法按照当前方案继续推进",
+      "page": null,
+      "claim_summary": "报道GS-05的风险披露和当日市场表现；状态仍为预计难续，不能提前改成已终止。新闻标题的因果解读不用于证明价格影响。",
+      "origin_group": "GS-05",
+      "event_key": "000628|acquire_control|华鲲振宇|2023-09-26",
+      "is_simulated": false
+    },
+    {
+      "id": "NEWS-03",
+      "title": "高新发展：终止收购四川华鲲振宇智能科技有限责任公司70%股权",
+      "publisher": "界面新闻（界面快报）",
+      "type": "news",
+      "url": "https://www.jiemian.com/article/11064106.html",
+      "disclosed_on": "2024-04-19",
+      "published_at": "2024-04-19T07:44:07+08:00",
+      "published_at_basis": "Web page data-article-publish-time=1713483847 (Unix seconds), converted to Asia/Shanghai",
+      "occurred_on": null,
+      "updated_at": null,
+      "quote": "公司现终止收购四川华鲲振宇智能科技有限责任公司70%的股权交易事项。",
+      "page": null,
+      "claim_summary": "转述GS-06对原交易的终止，未完整保留原公告第5页关于未来收购意向及不确定性的限制条件。",
+      "origin_group": "GS-06",
+      "event_key": "000628|acquire_control|华鲲振宇|2023-09-26",
+      "is_simulated": false
+    }
+  ]
+}
