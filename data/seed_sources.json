@@ -42,6 +42,11 @@
           "quote": "2023年10月18日，高新发展分别与高投电子集团、共青城华鲲、平潭云辰签署的《发行股份及支付现金购买资产框架协议》",
           "page": 8,
           "classification": "reported_fact"
+        },
+        {
+          "quote": "高投电子集团持有的华鲲振宇30%股权、共青城华鲲持有的华鲲振宇25%股权、平潭云辰持有的华鲲振宇15%股权",
+          "page": 10,
+          "classification": "proposed_transaction_components"
         }
       ],
       "event_key": "000628|acquire_control|华鲲振宇|2023-09-26",
@@ -145,7 +150,7 @@
       "disclosed_on": "2024-04-19",
       "occurred_on": "2024-04-18",
       "updated_at": null,
-      "quote": "33.75%股权",
+      "quote": "倍特投资拟向高投资管以非公开协议方式转让其持有的倍特期货有限公司（以下简称“倍特期货”、“目标公司”）33.75%股权。",
       "page": 1,
       "claim_summary": "控股子公司倍特投资拟向高投资管转让倍特期货33.75%股权，标的和交易方向与华鲲振宇重组不同；应建独立事件。",
       "event_key": "000628|dispose_equity|倍特期货|2024-04-18",

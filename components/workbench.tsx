@@ -15,9 +15,9 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
 import {
-  BASE_EVENTS, DEMO_FINAL_SOURCE, SEED_SOURCES, isDuplicateSource, snapshot,
+  BASE_EVENTS, DEMO_FINAL_SOURCE, SEED_SOURCES, evaluateClaimUpdates, isDuplicateSource, snapshot,
   sortedSources, sourceText, sourcesKnownBy, suggestEvent,
-  type EventId, type EventInfo, type ExtractedClaim, type Notice, type Source,
+  type EventId, type EventInfo, type EvidenceRelation, type ExtractedClaim, type Notice, type Source,
   type SourceType,
 } from "@/lib/evidence";
 
@@ -42,11 +42,13 @@ type FormState = {
   updatedOn: string;
   text: string;
   originGroup: string;
+  simulated: boolean;
 };
 
 const emptyForm: FormState = {
   title: "", publisher: "", url: "", sourceType: "公告",
   disclosedOn: "", occurredOn: "", updatedOn: "", text: "", originGroup: "",
+  simulated: false,
 };
 
 const storageKey = "event-evidence-workbench-v1";
@@ -75,7 +77,7 @@ function sampledAnalysis(): Analysis {
     claims: [
       {
         text: "公司同意终止本次发行股份及支付现金购买资产交易",
-        quote: DEMO_FINAL_SOURCE.quote, kind: "事实陈述", relation: "更正",
+        quote: DEMO_FINAL_SOURCE.quote, kind: "事实陈述", relation: "更新",
       },
       {
         text: "未来取得标的公司控制权的时间和方案仍不确定",
@@ -93,7 +95,6 @@ export default function Workbench() {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [replay, setReplay] = useState(false);
-  const [replayFinalAdded, setReplayFinalAdded] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<EventId>("huakun");
   const [selectedSourceId, setSelectedSourceId] = useState("GS-06");
   const [search, setSearch] = useState("");
@@ -104,21 +105,27 @@ export default function Workbench() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [choice, setChoice] = useState<EventId | "new">("huakun");
   const [manualClaim, setManualClaim] = useState("");
+  const [reviewRelation, setReviewRelation] = useState<EvidenceRelation>("仅提及");
+  const [reviewTarget, setReviewTarget] = useState("");
+  const [reviewValidUntil, setReviewValidUntil] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [formError, setFormError] = useState("");
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(storageKey) || "{}") as {
-        sources?: Source[]; events?: EventInfo[]; notices?: Notice[];
-      };
-      if (Array.isArray(saved.sources)) setUserSources(saved.sources);
-      if (Array.isArray(saved.events)) setCustomEvents(saved.events);
-      if (Array.isArray(saved.notices)) setNotices(saved.notices);
-    } catch {
-      // Corrupt local state never hides the verified seed materials.
-    }
-    setHydrated(true);
+    const timer = window.setTimeout(() => {
+      try {
+        const saved = JSON.parse(localStorage.getItem(storageKey) || "{}") as {
+          sources?: Source[]; events?: EventInfo[]; notices?: Notice[];
+        };
+        if (Array.isArray(saved.sources)) setUserSources(saved.sources);
+        if (Array.isArray(saved.events)) setCustomEvents(saved.events);
+        if (Array.isArray(saved.notices)) setNotices(saved.notices);
+      } catch {
+        // Corrupt local state never hides the verified seed materials.
+      }
+      setHydrated(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -130,9 +137,11 @@ export default function Workbench() {
 
   const allSources = useMemo(() => {
     const combined = [...SEED_SOURCES, ...userSources];
-    return replay && !replayFinalAdded ? sourcesKnownBy(combined, "2024-04-18") : combined;
-  }, [userSources, replay, replayFinalAdded]);
-  const allEvents = useMemo(() => [...BASE_EVENTS, ...customEvents], [customEvents]);
+    return replay ? sourcesKnownBy(combined, "2024-04-18") : combined;
+  }, [userSources, replay]);
+  const allEvents = useMemo(() => [...BASE_EVENTS, ...customEvents].filter((item) =>
+    !replay || allSources.some((source) => source.eventId === item.id)
+  ), [customEvents, replay, allSources]);
   const event = allEvents.find((item) => item.id === selectedEventId) ?? BASE_EVENTS[0];
   const eventSources = useMemo(() => sortedSources(allSources, event.id), [allSources, event.id]);
   const current = useMemo(() => snapshot(event.id, allSources), [event.id, allSources]);
@@ -142,7 +151,11 @@ export default function Workbench() {
     (item.company + item.ticker + item.title).toLowerCase().includes(search.trim().toLowerCase())
   );
   const unreadCount = notices.filter((notice) => !notice.read).length;
-  const isDemoForm = form.url.toLowerCase() === DEMO_FINAL_SOURCE.url.toLowerCase();
+  const isDemoForm = !form.simulated
+    && form.url.toLowerCase() === DEMO_FINAL_SOURCE.url.toLowerCase()
+    && form.title.trim() === DEMO_FINAL_SOURCE.title
+    && form.text.trim() === sourceText(DEMO_FINAL_SOURCE).trim();
+  const targetClaims = choice === "new" ? [] : snapshot(choice, allSources).claims;
 
   function setField<K extends keyof FormState>(field: K, value: FormState[K]) {
     setForm((previous) => ({ ...previous, [field]: value }));
@@ -152,7 +165,6 @@ export default function Workbench() {
 
   function startReplay() {
     setReplay(true);
-    setReplayFinalAdded(false);
     setSelectedEventId("huakun");
     setSelectedSourceId("GS-05");
     setTab("timeline");
@@ -161,7 +173,6 @@ export default function Workbench() {
 
   function restoreCurrent() {
     setReplay(false);
-    setReplayFinalAdded(false);
     setSelectedSourceId("GS-06");
     toast.info("已返回完整资料视图");
   }
@@ -178,6 +189,7 @@ export default function Workbench() {
       updatedOn: "",
       text: sourceText(DEMO_FINAL_SOURCE),
       originGroup: "GS-06",
+      simulated: false,
     });
     setAnalysis(null);
     setChoice("huakun");
@@ -205,6 +217,9 @@ export default function Workbench() {
         claims: Array.isArray(result.claims) ? result.claims : [],
       };
       setAnalysis(value);
+      setReviewRelation(value.claims[0]?.relation ?? "仅提及");
+      setReviewTarget("");
+      setReviewValidUntil("");
       setChoice(value.suggestedEvent === "huakun" || value.suggestedEvent === "beite"
         ? value.suggestedEvent : "new");
       toast.success("模型已提取可回查的主张，请核对后提交");
@@ -212,6 +227,9 @@ export default function Workbench() {
       if (isDemoForm && form.text.includes(DEMO_FINAL_SOURCE.quote)) {
         const fallback = sampledAnalysis();
         setAnalysis(fallback);
+        setReviewRelation(fallback.claims[0]?.relation ?? "仅提及");
+        setReviewTarget("");
+        setReviewValidUntil("");
         setChoice("huakun");
         toast.info("模型不可用，已切换为人工核验的演示样本");
       } else {
@@ -221,6 +239,9 @@ export default function Workbench() {
           matchReason: suggested.reason, claims: [], mode: "manual",
           warnings: [error instanceof Error ? error.message : "在线抽取不可用", "可手工填写一条主张，再确认导入。"],
         });
+        setReviewRelation("仅提及");
+        setReviewTarget("");
+        setReviewValidUntil("");
         setChoice(suggested.id === "huakun" || suggested.id === "beite" ? suggested.id : "new");
         toast.warning("已进入人工核对模式");
       }
@@ -234,12 +255,12 @@ export default function Workbench() {
       setFormError("请先分析材料，查看事件归属与主张。");
       return;
     }
-    if (choice === "huakun" && isDemoForm && replay && !replayFinalAdded) {
-      setReplayFinalAdded(true);
+    if (choice === "huakun" && isDemoForm && replay) {
+      setReplay(false);
       setSelectedEventId("huakun");
       setSelectedSourceId("GS-06");
       setTab("timeline");
-      setNotices((previous) => [{
+      setNotices((previous) => previous.some((item) => item.sourceId === "GS-06") ? previous : [{
         id: "notice-demo-" + Date.now(), eventId: "huakun", sourceId: "GS-06",
         title: "原重组方案由预计难续变为正式终止",
         detail: "4 月 18 日董事会作出终止决议，4 月 19 日公告披露。后续收购意向的方案和时间仍不确定；见 GS-06 第 1、4、5 页。",
@@ -248,11 +269,12 @@ export default function Workbench() {
       setImportOpen(false);
       setForm(emptyForm);
       setAnalysis(null);
-      toast.success("新公告已并入事件，结论和通知已更新");
+      toast.success("已结束历史回放，应用 4 月 19 日已核验公告");
       return;
     }
-    if (isDuplicateSource(allSources, {
+    if (isDuplicateSource([...SEED_SOURCES, ...userSources], {
       url: form.url.trim(), title: form.title.trim(), quote: form.text.trim().slice(0, 160),
+      updatedOn: form.updatedOn || null,
     })) {
       setFormError("这份材料已在当前资料中，重复导入不会生成新版本或通知。");
       return;
@@ -261,23 +283,43 @@ export default function Workbench() {
       setFormError("请至少手工填写一条可核查主张。");
       return;
     }
+    if (["反驳", "更正", "更新"].includes(reviewRelation) && !reviewTarget) {
+      setFormError("请指出首条主张对应的已有主张，才能记录冲突或版本变化。");
+      return;
+    }
+    if (reviewValidUntil && !reviewTarget) {
+      setFormError("请指出有效截止日对应的已有主张。");
+      return;
+    }
     const eventId = choice === "new" ? "custom-" + Date.now() : choice;
     const id = "USR-" + Date.now();
+    const reviewFields = {
+      relation: reviewRelation,
+      targetClaimId: reviewTarget || undefined,
+      validUntil: reviewValidUntil || undefined,
+    };
     const extractedClaims: ExtractedClaim[] = analysis.claims.length
-      ? analysis.claims
+      ? analysis.claims.map((claim, index) => index === 0 ? { ...claim, ...reviewFields } : claim)
       : [{ text: manualClaim.trim(), quote: form.text.trim().slice(0, 160),
         kind: form.sourceType === "研报" ? "观点" : form.sourceType === "市场传闻" ? "传闻" : "事实陈述",
-        relation: "仅提及" }];
+        ...reviewFields }];
     const next: Source = {
       id, eventId, title: form.title.trim(), publisher: form.publisher.trim() || "未注明",
       sourceType: form.sourceType, url: form.url.trim(), disclosedOn: form.disclosedOn || null,
       occurredOn: form.occurredOn || null, capturedOn: new Date().toISOString(),
       updatedOn: form.updatedOn || null, quote: extractedClaims[0]?.quote || form.text.slice(0, 160),
-      page: null, additionalQuotes: [], summary: "用户导入材料，等待原文核验。",
-      verified: false, simulated: false, originGroup: form.originGroup.trim() || id,
+      page: null, additionalQuotes: [], summary: form.simulated ? "模拟测试材料，不代表真实历史。" : "用户导入材料，等待原文核验。",
+      verified: false, simulated: form.simulated, originGroup: form.originGroup.trim() || id,
       extractedClaims,
     };
+    const before = snapshot(eventId, [...SEED_SOURCES, ...userSources]);
+    const review = evaluateClaimUpdates(before.claims, next);
     setUserSources((previous) => [...previous, next]);
+    if (review.notices.length) setNotices((previous) => {
+      const existingIds = new Set(previous.map((notice) => notice.id));
+      return [...review.notices.filter((notice) => !existingIds.has(notice.id)), ...previous];
+    });
+    setReplay(false);
     if (choice === "new") setCustomEvents((previous) => [...previous, {
       id: eventId, company: analysis.entities[0] || form.publisher.trim() || "待识别公司",
       ticker: "", title: form.title.trim(), object: analysis.object || "待核对标的",
@@ -290,7 +332,9 @@ export default function Workbench() {
     setForm(emptyForm);
     setAnalysis(null);
     setManualClaim("");
-    toast.success("材料已导入；原文尚未独立核验");
+    toast.success(review.impacts.length
+      ? "材料已导入；相关主张已标待复核并生成通知"
+      : "材料已导入；原文尚未独立核验");
   }
 
   function selectEvent(id: EventId) {
@@ -351,13 +395,15 @@ export default function Workbench() {
                   <div className="form-grid"><label>披露日期<Input value={form.disclosedOn} onChange={(event) => setField("disclosedOn", event.target.value)} type="date" /></label><label>发生日期（未知可空）<Input value={form.occurredOn} onChange={(event) => setField("occurredOn", event.target.value)} type="date" /></label></div>
                   <label>原文片段<Textarea value={form.text} onChange={(event) => setField("text", event.target.value)} placeholder="粘贴与事件相关的原句。系统不把网页链接当作已核实全文。" rows={6} /></label>
                   <details className="form-extra"><summary>更多来源信息</summary><div className="form-grid"><label>原文更新时间<Input value={form.updatedOn} onChange={(event) => setField("updatedOn", event.target.value)} type="date" /></label><label>所转引的原始材料 ID<Input value={form.originGroup} onChange={(event) => setField("originGroup", event.target.value)} placeholder="如 GS-05；无则留空" /></label></div></details>
+                  <label className="simulation-toggle"><input type="checkbox" checked={form.simulated} onChange={(event) => setField("simulated", event.target.checked)} />这是模拟测试材料，须在页面显著标记</label>
                   <Button onClick={analyze} disabled={analyzing} className="analyze-button">{analyzing ? <LoaderCircle size={16} className="spin" /> : <Search size={16} />}{analyzing ? "正在核对原文..." : "提取主张并建议归属"}</Button>
                   {analysis && <div className="analysis-panel">
                     <div className="analysis-head"><strong>{analysis.mode === "deepseek" ? "DeepSeek 在线抽取" : analysis.mode === "curated" ? "已核验演示索引" : "人工核对模式"}</strong><span>{analysis.claims.length} 条主张</span></div>
                     <p className="match-reason">{analysis.matchReason}</p>
-                    <div className="match-options"><span>选择事件归属</span><RadioGroup value={choice} onValueChange={(value) => setChoice(value as EventId | "new")}>{[...BASE_EVENTS.map((item) => ({ id: item.id, label: item.title })), { id: "new", label: "新建事件" }].map((option) => <label key={option.id}><RadioGroupItem value={option.id} />{option.label}{analysis.suggestedEvent === option.id && <em>建议</em>}</label>)}</RadioGroup></div>
+                    <div className="match-options"><span>选择事件归属</span><RadioGroup value={choice} onValueChange={(value) => { setChoice(value as EventId | "new"); setReviewTarget(""); }}>{[...allEvents.map((item) => ({ id: item.id, label: item.title })), { id: "new", label: "新建事件" }].map((option) => <label key={option.id}><RadioGroupItem value={option.id} />{option.label}{analysis.suggestedEvent === option.id && <em>建议</em>}</label>)}</RadioGroup></div>
                     {analysis.claims.map((claim, index) => <div className="analysis-claim" key={index}><div><b>{claim.kind}</b><span>{claim.relation}</span></div><p>{claim.text}</p><blockquote>“{claim.quote}”</blockquote></div>)}
                     {analysis.claims.length === 0 && <label className="manual-claim">手工填写一条可核查主张<Input value={manualClaim} onChange={(event) => setManualClaim(event.target.value)} placeholder="如：公司披露拟转让某项股权" /></label>}
+                    <div className="review-controls"><strong>首条主张的人工复核</strong><label>与已有主张的关系<select value={reviewRelation} onChange={(event) => setReviewRelation(event.target.value as EvidenceRelation)}>{["仅提及", "支持", "更新", "反驳", "更正"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label>对应哪条已有主张<select value={reviewTarget} onChange={(event) => setReviewTarget(event.target.value)}><option value="">未指定</option>{targetClaims.map((claim) => <option key={claim.id} value={claim.id}>{claim.id} · {claim.text}</option>)}</select></label><label>有效截止日（可空）<Input type="date" value={reviewValidUntil} onChange={(event) => setReviewValidUntil(event.target.value)} /></label><small>反驳、更正和到期先生成待复核提示；用户材料不能直接改写已核验公告结论。</small></div>
                     {analysis.warnings?.map((warning) => <p className="analysis-warning" key={warning}><TriangleAlert size={14} />{warning}</p>)}
                     <p className="review-note">用户导入材料默认待复核；只有资料包中逐份核验过的原始公告可改变演示案例的已确认状态。</p>
                     <Button onClick={confirmImport} className="confirm-button">确认归属并导入</Button>
@@ -375,7 +421,7 @@ export default function Workbench() {
           <Tabs value={tab} onValueChange={setTab} className="detail-tabs">
             <TabsList variant="line"><TabsTrigger value="timeline">证据时间线 <span>{eventSources.length}</span></TabsTrigger><TabsTrigger value="claims">逐条主张 <span>{current.claims.length}</span></TabsTrigger></TabsList>
             <TabsContent value="timeline"><div className="section-caption"><CalendarClock size={16} /><span>按披露日期排序；发生时间可能更早，抓取时间不用于倒推当时已知信息。</span></div><div className="timeline">
-              {eventSources.map((source, index) => <button className={"timeline-row " + (selectedSource?.id === source.id ? "active" : "")} key={source.id} onClick={() => setSelectedSourceId(source.id)}>
+              {eventSources.map((source) => <button className={"timeline-row " + (selectedSource?.id === source.id ? "active" : "")} key={source.id} onClick={() => setSelectedSourceId(source.id)}>
                 <span className="timeline-track"><span className="timeline-node" /></span><time>{shortDate(source.disclosedOn)}</time><span className="timeline-content"><strong>{source.title}</strong><small>{source.id} · {source.publisher} · {source.sourceType}{!source.verified ? " · 用户导入待复核" : ""}</small></span><ChevronRight size={16} className="row-arrow" />
               </button>)}
               {eventSources.length === 0 && <p className="empty-list">尚无材料。可以导入一份来源并建立事件。</p>}

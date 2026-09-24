@@ -3,13 +3,19 @@ import seed from "@/data/seed_sources.json";
 export type EventId = "huakun" | "beite" | string;
 export type SourceType = "公告" | "新闻" | "研报" | "市场传闻" | "其他";
 export type ClaimKind = "事实陈述" | "观点" | "推测" | "传闻";
-export type EvidenceRelation = "支持" | "反驳" | "更正" | "仅提及";
+export type EvidenceRelation = "支持" | "反驳" | "否认" | "更正" | "更新" | "仅提及";
 
 export type ExtractedClaim = {
   text: string;
   quote: string;
   kind: ClaimKind;
   relation: EvidenceRelation;
+  /** Required before an imported denial or correction can affect an existing claim. */
+  targetClaimId?: string;
+  /** New wording proposed by a correction; the original claim is retained. */
+  replacementText?: string;
+  /** Last calendar date on which this claim may be relied on without review. */
+  validUntil?: string | null;
 };
 
 export type Source = {
@@ -51,6 +57,8 @@ export type ClaimView = {
   state: string;
   evidenceIds: string[];
   note?: string;
+  validUntil?: string | null;
+  targetClaimId?: string;
 };
 
 export type EventSnapshot = {
@@ -136,13 +144,38 @@ export function normalizeUrl(url: string): string {
   }
 }
 
-export function isDuplicateSource(existing: Source[], candidate: Pick<Source, "url" | "title" | "quote">): boolean {
+export type SourceImportKind = "duplicate" | "new_version" | "new_source";
+
+/** A changed quote at the same URL is a version only when an updated date is supplied. */
+export function classifySourceImport(
+  existing: Source[],
+  candidate: Pick<Source, "url" | "title" | "quote"> & Partial<Pick<Source, "updatedOn">>,
+): SourceImportKind {
   const url = normalizeUrl(candidate.url);
   const fingerprint = (candidate.title + candidate.quote).replace(/\s+/g, "").toLowerCase();
-  return existing.some((source) =>
-    (url.length > 8 && normalizeUrl(source.url) === url) ||
+  if (existing.some((source) =>
     (source.title + source.quote).replace(/\s+/g, "").toLowerCase() === fingerprint
+  )) return "duplicate";
+
+  const previousVersions = existing.filter((source) =>
+    url.length > 8 && normalizeUrl(source.url) === url
   );
+  if (!previousVersions.length) return "new_source";
+  const quote = candidate.quote.replace(/\s+/g, "").toLowerCase();
+  if (quote && previousVersions.some((source) =>
+    source.quote.replace(/\s+/g, "").toLowerCase() === quote
+  )) return "duplicate";
+  if (candidate.updatedOn && previousVersions.every((source) => source.updatedOn !== candidate.updatedOn)) {
+    return "new_version";
+  }
+  return "duplicate";
+}
+
+export function isDuplicateSource(
+  existing: Source[],
+  candidate: Pick<Source, "url" | "title" | "quote"> & Partial<Pick<Source, "updatedOn">>,
+): boolean {
+  return classifySourceImport(existing, candidate) === "duplicate";
 }
 
 export function suggestEvent(title: string, text: string): { id: EventId | "new" | "uncertain"; reason: string } {
@@ -165,9 +198,154 @@ export function sourcesKnownBy(sources: Source[], disclosedCutoff: string): Sour
   return sources.filter((source) => !!source.disclosedOn && source.disclosedOn <= disclosedCutoff);
 }
 
-export function snapshot(eventId: EventId, sources: Source[]): EventSnapshot {
+export type ClaimImpact = {
+  claimIndex: number;
+  targetClaimId: string;
+  relation: EvidenceRelation;
+  previousState: string;
+  reviewState: string;
+  sourceId: string;
+  sourceUrl: string;
+  quote: string;
+  reason: string;
+  authoritative: boolean;
+};
+
+export type ClaimUpdateResult = {
+  claims: ClaimView[];
+  impacts: ClaimImpact[];
+  notices: Notice[];
+};
+
+export function currentChinaDate(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+}
+
+function isCalendarDate(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value + "T00:00:00Z"));
+}
+
+/**
+ * Apply one source to explicitly linked atomic claims. User and simulated sources
+ * create review rows and notices, while the verified claim they challenge stays intact.
+ * Only independently verified original announcements may change a claim itself.
+ */
+export function evaluateClaimUpdates(
+  previousClaims: ClaimView[], source: Source, asOfDate: string = currentChinaDate(),
+): ClaimUpdateResult {
+  const claims = previousClaims.map((claim) => ({ ...claim, evidenceIds: [...claim.evidenceIds] }));
+  const impacts: ClaimImpact[] = [];
+  const notices: Notice[] = [];
+  const authoritative = source.verified && !source.simulated &&
+    source.sourceType === "公告" && source.originGroup === source.id;
+  const today = isCalendarDate(asOfDate) ? asOfDate : asOfDate.slice(0, 10);
+
+  for (const [claimIndex, incoming] of (source.extractedClaims ?? []).entries()) {
+    if (!incoming.targetClaimId || !incoming.quote.trim()) continue;
+    const target = claims.find((claim) => claim.id === incoming.targetClaimId);
+    if (!target) continue;
+
+    const validUntil = incoming.validUntil ?? target.validUntil;
+    const expired = !!validUntil && isCalendarDate(validUntil) &&
+      isCalendarDate(today) && validUntil < today;
+    let reviewState: string;
+    let reason: string;
+    if (incoming.relation === "反驳" || incoming.relation === "否认") {
+      reviewState = authoritative ? "被否认" : "否认待复核";
+      reason = `新来源明确否认主张 ${target.id}；仅该主张受影响。`;
+    } else if (incoming.relation === "更正") {
+      reviewState = authoritative ? "已更正" : "更正待复核";
+      reason = `新来源提出主张 ${target.id} 的更正；旧表述保留以便回放。`;
+    } else if (expired) {
+      reviewState = "到期需复核";
+      reason = `主张 ${target.id} 的适用截至日 ${validUntil} 已过；过期不表示原说法为假。`;
+    } else {
+      // A new update, repost or supporting statement does not supersede a claim.
+      continue;
+    }
+
+    const alreadyReviewed = claims.some((claim) =>
+      claim.targetClaimId === target.id && claim.state.endsWith(reviewState)
+    );
+    const changed = authoritative
+      ? target.state !== reviewState
+      : !alreadyReviewed;
+    if (!changed) continue;
+
+    const impact: ClaimImpact = {
+      claimIndex, targetClaimId: target.id, relation: incoming.relation,
+      previousState: target.state, reviewState, sourceId: source.id,
+      sourceUrl: source.url, quote: incoming.quote, reason, authoritative,
+    };
+    impacts.push(impact);
+
+    if (authoritative) {
+      target.state = reviewState;
+      target.evidenceIds = [...new Set([...target.evidenceIds, source.id])];
+      target.note = reason;
+      if (incoming.relation === "更正") claims.push({
+        id: `${source.id}-C${claimIndex + 1}-corrected`,
+        text: incoming.replacementText?.trim() || incoming.text,
+        kind: incoming.kind,
+        state: "已确认披露",
+        evidenceIds: [source.id],
+        note: "确认的是更正内容已正式披露，后续履行仍须单独核验。",
+        targetClaimId: target.id,
+      });
+    } else {
+      const prefix = source.simulated ? "模拟测试 · " : "用户材料 · ";
+      claims.push({
+        id: `${source.id}-C${claimIndex + 1}`,
+        text: incoming.relation === "更正"
+          ? incoming.replacementText?.trim() || incoming.text : incoming.text,
+        kind: incoming.kind,
+        state: prefix + reviewState,
+        evidenceIds: [source.id, ...target.evidenceIds],
+        note: `${reason}原已核验主张「${target.state}」未自动改判；材料仍待核验。`,
+        targetClaimId: target.id,
+      });
+    }
+
+    const title = `${source.simulated ? "[模拟] " : ""}主张 ${target.id}：${reviewState}`;
+    const statusExplanation = authoritative
+      ? `「${target.text}」由「${impact.previousState}」变为「${reviewState}」。`
+      : `针对「${target.text}」新增「${reviewState}」提示；原主张仍为「${impact.previousState}」。`;
+    notices.push({
+      id: `notice-${source.id}-${target.id}-${reviewState}`,
+      eventId: source.eventId, sourceId: source.id, title,
+      detail: `${statusExplanation}${reason}依据：${source.id}「${incoming.quote}」${source.url ? ` ${source.url}` : "（原文链接未提供）"}。${authoritative ? "" : "用户材料尚未独立核验，官方结论保持原样。"}`,
+      createdAt: new Date().toISOString(), read: false,
+    });
+  }
+  return { claims, impacts, notices };
+}
+
+export function snapshot(eventId: EventId, sources: Source[], asOfDate: string = currentChinaDate()): EventSnapshot {
   const own = sortedSources(sources, eventId);
-  const ids = new Set(own.map((source) => source.id));
+  if (own.length === 0) return {
+    label: "尚未披露",
+    headline: "截至该时点尚无公开材料",
+    explanation: "当前回放范围内没有此事件的来源，不能推定事件当时已发生或已公开。",
+    sourceId: "",
+    claims: [],
+  };
+  const ids = new Set(own.filter((source) => source.verified).map((source) => source.id));
+  if (eventId === "huakun" && !["GS-01", "GS-02", "GS-03", "GS-04", "GS-05", "GS-06"].some((id) => ids.has(id))) {
+    return {
+      label: "待复核", headline: "仅有用户材料，尚无已核验公告",
+      explanation: "现有材料尚未独立核对，不能生成关于收购方案的官方结论。",
+      sourceId: own[0].id, claims: withUserClaims([], own, asOfDate),
+    };
+  }
+  if (eventId === "beite" && !ids.has("GS-X1")) {
+    return {
+      label: "待复核", headline: "仅有用户材料，尚无已核验公告",
+      explanation: "现有材料尚未独立核对，不能生成关于股权转让的官方结论。",
+      sourceId: own[0].id, claims: withUserClaims([], own, asOfDate),
+    };
+  }
   if (eventId === "huakun") {
     const claims: ClaimView[] = [
       {
@@ -208,26 +386,26 @@ export function snapshot(eventId: EventId, sources: Source[]): EventSnapshot {
       label: "已终止 · 后续意向未定",
       headline: "2023 年披露的收购方案已终止",
       explanation: "4 月 18 日董事会、监事会同意终止本次交易，4 月 19 日对外披露。公司另表示将推动相关股权收购，但能否取得控制权、时间和方案均不确定。",
-      sourceId: "GS-06", claims: withUserClaims(claims, own),
+      sourceId: "GS-06", claims: withUserClaims(claims, own, asOfDate),
     };
     if (ids.has("GS-05")) return {
       label: "预计难续 · 待正式决定",
       headline: "当前方案很可能无法继续推进",
       explanation: "4 月 18 日公司披露正协商是否终止，预计 4 月 19 日公告决定。此时尚不能写成交易已经终止。",
-      sourceId: "GS-05", claims: withUserClaims(claims, own),
+      sourceId: "GS-05", claims: withUserClaims(claims, own, asOfDate),
     };
     if (ids.has("GS-04")) return {
       label: "风险上升 · 尚未终止",
       headline: "交易作价未达一致，存在终止风险",
       explanation: "审计和评估仍在推进，交易作价尚未达成一致，后续能否完成不确定。",
-      sourceId: "GS-04", claims: withUserClaims(claims, own),
+      sourceId: "GS-04", claims: withUserClaims(claims, own, asOfDate),
     };
     return {
       label: "拟议中 · 尚未成交",
       headline: "收购方案处于筹划和审批阶段",
       explanation: "公司披露收购预案，但审计评估、审批和实际交割尚未完成。",
       sourceId: ids.has("GS-02") ? "GS-02" : "GS-01",
-      claims: withUserClaims(claims, own),
+      claims: withUserClaims(claims, own, asOfDate),
     };
   }
   if (eventId === "beite") return {
@@ -239,30 +417,42 @@ export function snapshot(eventId: EventId, sources: Source[]): EventSnapshot {
       id: "B1", text: "倍特投资拟转让倍特期货 33.75% 股权",
       kind: "事实陈述", state: "已确认披露", evidenceIds: ["GS-X1"],
       note: "确认的是拟转让的披露，不能推定交易已经完成。",
-    }], own),
+    }], own, asOfDate),
   };
   return {
     label: "待复核", headline: "新事件等待更多来源",
     explanation: "当前仅有用户导入材料，系统尚未核对原始出处。",
     sourceId: own[0]?.id ?? "",
-    claims: withUserClaims([], own),
+    claims: withUserClaims([], own, asOfDate),
   };
 }
 
-function withUserClaims(base: ClaimView[], own: Source[]): ClaimView[] {
-  const additions: ClaimView[] = [];
+function withUserClaims(base: ClaimView[], own: Source[], asOfDate: string): ClaimView[] {
+  let claims = [...base];
   for (const source of own) {
     if (source.verified) continue;
+    const result = evaluateClaimUpdates(claims, source, asOfDate);
+    claims = result.claims;
+    const handled = new Set(result.impacts.map((impact) => impact.claimIndex));
     for (const [index, claim] of (source.extractedClaims ?? []).entries()) {
-      additions.push({
+      if (handled.has(index)) continue;
+      // The review queue already has this target in the same state; retain the
+      // new material in the timeline without adding a duplicate claim card.
+      if (claim.targetClaimId && claims.some((item) => item.targetClaimId === claim.targetClaimId &&
+        ((claim.relation === "反驳" || claim.relation === "否认") && item.state.endsWith("否认待复核") ||
+          claim.relation === "更正" && item.state.endsWith("更正待复核") ||
+          !!claim.validUntil && item.state.endsWith("到期需复核")))) continue;
+      claims.push({
         id: source.id + "-C" + (index + 1),
         text: claim.text,
         kind: claim.kind,
         state: source.simulated ? "模拟 · 不参与真实结论" : "用户材料 · 待复核",
         evidenceIds: [source.id],
-        note: source.simulated ? "测试材料，不代表真实历史。" : "原文链接与引文尚未独立核验。",
+        note: claim.targetClaimId
+          ? `指向主张 ${claim.targetClaimId}，但尚无可执行的状态迁移；原结论未改。`
+          : source.simulated ? "测试材料，不代表真实历史。" : "原文链接与引文尚未独立核验。",
       });
     }
   }
-  return [...base, ...additions];
+  return claims;
 }
